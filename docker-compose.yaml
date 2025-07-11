@@ -1,0 +1,96 @@
+version: "3.9"
+
+services:
+  # --------------------
+  # Infrastructure
+  # --------------------
+  redis:
+    image: redis:7.2-alpine
+    container_name: redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Apache Kafka in KRaft mode (no ZooKeeper)
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT"
+      KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      CLUSTER_ID: "aaaaBBBBccccDDDDeeeeFFFFgg=="   # any unique base-64 string
+    healthcheck:
+      # `cub` is bundled with the Confluent image and blocks until the broker is ready
+      test: ["CMD", "cub", "kafka-ready", "-b", "localhost:9092", "1", "20"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+  # --------------------
+  # Application
+  # --------------------
+  matchmaking-service:
+    build:
+      context: .
+      dockerfile: MatchMaking.Service/Dockerfile
+    container_name: matchmaking-service
+    depends_on:
+      - redis
+      - kafka
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      REDIS__CONNECTIONSTRING: redis:6379
+      KAFKA__BOOTSTRAP_SERVERS: kafka:9092
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+    healthcheck:
+      test: ["CMD", "dotnet", "MatchMaking.Worker.dll", "healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # --------------------
+  # Workers (2 instances)
+  # --------------------
+  # Common worker definition (YAML anchor)
+  matchmaking-worker-1: &matchmaking-worker
+    container_name: matchmaking-worker-1
+    build:
+      context: .
+      dockerfile: MatchMaking.Worker/Dockerfile
+    depends_on:
+      - redis
+      - kafka
+    environment:
+      REDIS__CONNECTIONSTRING: redis:6379
+      KAFKA__BOOTSTRAP_SERVERS: kafka:9092
+    healthcheck:
+      test: [ "CMD", "dotnet", "MatchMaking.Worker.dll", "healthcheck" ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  matchmaking-worker-2:
+    <<: *matchmaking-worker
+    container_name: matchmaking-worker-2
+
+volumes:
+  redis-data:
