@@ -1,11 +1,31 @@
 @MatchMaking.Service_HostAddress = http://localhost:5065
 
-GET {{MatchMaking.Service_HostAddress}}/todos/
-Accept: application/json
+POST {{MatchMaking.Service_HostAddress}}/match-search
+Content-Type: application/json
+
+{
+  "userId": "test-user1"
+}
 
 ###
 
-GET {{MatchMaking.Service_HostAddress}}/todos/1
-Accept: application/json
+POST {{MatchMaking.Service_HostAddress}}/match-search
+Content-Type: application/json
+
+{
+  "userId": "test-user2"
+}
 
 ###
+
+POST {{MatchMaking.Service_HostAddress}}/match-search
+Content-Type: application/json
+
+{
+  "userId": "test-user3"
+}
+
+###
+
+GET {{MatchMaking.Service_HostAddress}}/match-info?userId=test-user1
+Accept: application/json

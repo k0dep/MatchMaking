@@ -5,15 +5,20 @@ WORKDIR /app
 FROM mcr.microsoft.com/dotnet/sdk:9.0.302-alpine3.21-amd64 AS build
 ARG BUILD_CONFIGURATION=Release
 WORKDIR /src
-COPY ["MatchMaking.Worker/MatchMaking.Worker.csproj", "MatchMaking.Worker/"]
+
+COPY MatchMaking.Worker/MatchMaking.Worker.csproj MatchMaking.Worker/
+COPY MatchMaking.Contracts/MatchMaking.Contracts.csproj MatchMaking.Contracts/
+COPY MatchMaking.Kafka/MatchMaking.Kafka.csproj         MatchMaking.Kafka/
+
 RUN dotnet restore "MatchMaking.Worker/MatchMaking.Worker.csproj"
+
 COPY . .
-WORKDIR "/src/MatchMaking.Worker"
-RUN dotnet build "./MatchMaking.Worker.csproj" -c $BUILD_CONFIGURATION -o /app/build
+WORKDIR /src/MatchMaking.Worker
+RUN dotnet build -c $BUILD_CONFIGURATION -o /app/build
 
 FROM build AS publish
 ARG BUILD_CONFIGURATION=Release
-RUN dotnet publish "./MatchMaking.Worker.csproj" -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false
+RUN dotnet publish -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false
 
 FROM base AS final
 WORKDIR /app

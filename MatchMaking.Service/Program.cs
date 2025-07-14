@@ -1,50 +1,89 @@
-using System.Text.Json.Serialization;
+using System.Text.Json;
+using StackExchange.Redis;
+using FluentValidation;
+using MatchMaking.Service.Entities;
+using MatchMaking.Service.HealthChecks;
+using MatchMaking.Service.Validators;
+using MatchMaking.Service.Workers;
+using MediatR;
+using OneOf.Types;
+using MatchMaking.Service.Extensions;
 
-if (args is ["healthcheck"])
+if (args is ["healthcheck", not null])
 {
     var client = new HttpClient();
-    var response = await client.GetAsync("http://localhost:5000/health");
+    var response = await client.GetAsync($"{args[1]}/health");
     Console.WriteLine($"StatusCode: {response.StatusCode}");
     Console.WriteLine($"Body: {await response.Content.ReadAsStringAsync()}");
     return response.IsSuccessStatusCode ? 0 : 1;
 }
 
-var builder = WebApplication.CreateSlimBuilder(args);
+var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddHealthChecks();
+builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
+    ConnectionMultiplexer.Connect(builder.Configuration["Redis:ConnectionString"]!));
 
-builder.Services.ConfigureHttpJsonOptions(options =>
+builder.Services.AddHostedService<MatchCompleteConsumer>();
+builder.Services.AddConsumersAndProducers(builder.Configuration);
+
+builder.Services.AddMediatR(cfg => cfg.RegisterServicesFromAssemblyContaining<Program>());
+builder.Services.AddTransient<IValidator<MatchInfoRequest>, MatchInfoRequestValidator>();
+builder.Services.AddTransient<IValidator<MatchSearchRequest>, MatchSearchRequestValidator>();
+
+builder.Services.AddApplicationRateLimiter();
+
+builder.Services.AddEndpointsApiExplorer();
+
+builder.Services.Configure<Microsoft.AspNetCore.Http.Json.JsonOptions>(options =>
 {
-    options.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJsonSerializerContext.Default);
+    options.SerializerOptions.PropertyNameCaseInsensitive = true;
+    options.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
 });
+
+builder.Services.AddProblemDetails();
+
+builder.Services.AddHealthChecks()
+    .AddCheck<RedisHealthCheck>("redis", tags: new[] { "ready" })
+    .AddCheck<KafkaHealthCheck>("kafka", tags: new[] { "ready" });
 
 var app = builder.Build();
 
-var sampleTodos = new Todo[]
+if (app.Environment.IsDevelopment())
 {
-    new(1, "Walk the dog"),
-    new(2, "Do the dishes", DateOnly.FromDateTime(DateTime.Now)),
-    new(3, "Do the laundry", DateOnly.FromDateTime(DateTime.Now.AddDays(1))),
-    new(4, "Clean the bathroom"),
-    new(5, "Clean the car", DateOnly.FromDateTime(DateTime.Now.AddDays(2)))
-};
+    app.UseExceptionHandler();
+}
 
-var todosApi = app.MapGroup("/todos");
-todosApi.MapGet("/", () => sampleTodos);
-todosApi.MapGet("/{id}", (int id) =>
-    sampleTodos.FirstOrDefault(a => a.Id == id) is { } todo
-        ? Results.Ok(todo)
-        : Results.NotFound());
+app.UseRateLimiter();
+
+app.MapPost("/match-search", async (
+        MatchSearchRequest request,
+        IMediator mediator,
+        CancellationToken ct) =>
+    {
+        var response = await mediator.Send(request, ct);
+
+        return response.Match(
+            (Success _) => Results.Created(),
+            (ValidationError validationError) => Results.BadRequest(validationError.Messages));
+    })
+    .RequireRateLimiting("match-search");
+
+app.MapGet("/match-info", async (
+        string userId,
+        IMediator mediator,
+        CancellationToken ct) =>
+    {
+        var response = await mediator.Send(new MatchInfoRequest(userId), ct);
+
+        return response.Match(
+            (MatchInfo info) => Results.Ok(info),
+            (NotFound _) => Results.NotFound(),
+            (ValidationError validationError) => Results.BadRequest(validationError.Messages));
+    });
 
 app.MapHealthChecks("/health");
 
-app.Run();
-
+await app.RunAsync();
 return 0;
 
-public record Todo(int Id, string? Title, DateOnly? DueBy = null, bool IsComplete = false);
-
-[JsonSerializable(typeof(Todo[]))]
-internal partial class AppJsonSerializerContext : JsonSerializerContext
-{
-}
+public partial class Program;
