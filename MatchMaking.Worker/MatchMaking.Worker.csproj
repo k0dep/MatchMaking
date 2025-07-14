@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+    <PropertyGroup>
+        <TargetFramework>net9.0</TargetFramework>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <UserSecretsId>dotnet-MatchMaking.Worker-3bd69947-036d-4da1-8356-4e52922fa068</UserSecretsId>
+        <RootNamespace>MatchMaking.Worker</RootNamespace>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.6"/>
+        <PackageReference Include="StackExchange.Redis" Version="2.8.41" />
+        <PackageReference Include="Confluent.Kafka" Version="2.11.0" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\MatchMaking.Contracts\MatchMaking.Contracts.csproj" />
+        <ProjectReference Include="..\MatchMaking.Kafka\MatchMaking.Kafka.csproj" />
+    </ItemGroup>
+</Project>

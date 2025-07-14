@@ -1,0 +1,80 @@
+version: "3.9"
+
+services:
+  redis:
+    image: redis:7.2-alpine
+    ports: ["6379:6379"]
+    volumes: [redis-data:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    hostname: kafka
+    ports: ["9092:9092"]
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT"
+      KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0 
+      CLUSTER_ID: "m1Ze6AjGRwqarkcxJscgyQ"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "cub", "kafka-ready", "-b", "localhost:9092", "1", "20"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+  matchmaking-service:
+    build:
+      context: .
+      dockerfile: MatchMaking.Service/Dockerfile
+    depends_on: [redis, kafka]
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      Redis__ConnectionString: redis:6379
+      Kafka__BootstrapServers: kafka:9092
+      ASPNETCORE_URLS: "http://*:8080"
+      Logging__LogLevel__Default: Debug
+      Logging__LogLevel__Microsoft.AspNetCore: Debug
+    ports: ["8080:8080"]
+    healthcheck:
+      test: ["CMD", "dotnet", "/app/MatchMaking.Service.dll", "healthcheck", "http://127.0.0.1:8080"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  matchmaking-worker:
+    build:
+      context: .
+      dockerfile: MatchMaking.Worker/Dockerfile
+    depends_on: [redis, kafka]
+    environment:
+      Redis__ConnectionString: redis:6379
+      Kafka__BootstrapServers: kafka:9092
+    healthcheck:
+      test: ["CMD", "dotnet", "/app/MatchMaking.Worker.dll", "healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    deploy:
+      replicas: 2
+
+volumes:
+  redis-data: {}
+  kafka-data: {}
